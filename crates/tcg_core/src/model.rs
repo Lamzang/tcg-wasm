@@ -6,15 +6,6 @@ pub type CardDefinitionId = String;
 pub type CardInstanceId = String;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct CardDefinition {
-    pub id: CardDefinitionId,
-    pub name: String,
-    pub cost: u32,
-    pub card_type: CardType,
-    pub effects: Vec<EffectDefinition>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum CardType {
     Unit,
     Spell,
@@ -22,12 +13,28 @@ pub enum CardType {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum EffectDefinition {
-    Draw {amount:u32},
-    Damage {amount:u32},
-    Heal {amount:u32}
+    Draw { amount: u32 },
+    Damage { amount: u32 },
+    Heal { amount: u32 },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UnitStats {
+    pub attack: i32,
+    pub health: i32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CardDefinition {
+    pub id: CardDefinitionId,
+    pub name: String,
+    pub cost: u32,
+    pub card_type: CardType,
+    pub unit_stats: Option<UnitStats>,
+    pub effects: Vec<EffectDefinition>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Zone {
     Deck,
     Hand,
@@ -42,12 +49,17 @@ pub struct CardInstance {
     pub owner_id: PlayerId,
     pub controller_id: PlayerId,
     pub zone: Zone,
+    pub attack: Option<i32>,
+    pub health: Option<i32>,
+    pub max_health: Option<i32>,
+    pub exhausted: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PlayerState {
     pub id: PlayerId,
-    pub mana:u32,
+    pub hp: i32,
+    pub mana: u32,
     pub max_mana: u32,
     pub deck: Vec<CardInstanceId>,
     pub hand: Vec<CardInstanceId>,
@@ -55,12 +67,12 @@ pub struct PlayerState {
     pub graveyard: Vec<CardInstanceId>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct GameState {
     pub current_player: usize,
     pub players: Vec<PlayerState>,
     pub turn: u32,
-    pub events: Vec<crate::event::GameEvent>,
     pub card_definitions: HashMap<CardDefinitionId, CardDefinition>,
-    pub card_instances: HashMap<CardInstanceId, CardInstance>
+    pub card_instances: HashMap<CardInstanceId, CardInstance>,
+    pub events: Vec<crate::event::GameEvent>,
 }

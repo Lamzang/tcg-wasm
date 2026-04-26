@@ -24,10 +24,15 @@ type CardInstance = {
   owner_id: string;
   controller_id: string;
   zone: Zone;
+  attack: number | null;
+  health: number | null;
+  max_health: number | null;
+  exhausted: boolean;
 };
 
 type PlayerState = {
   id: string;
+  hp: number;
   mana: number;
   max_mana: number;
   deck: string[];
@@ -61,8 +66,8 @@ type GameState = {
   current_player: number;
   players: PlayerState[];
   turn: number;
-  card_definitions: Record<string, CardDefinition>;
-  card_instances: Record<string, CardInstance>;
+  card_definitions: Map<string, CardDefinition>;
+  card_instances: Map<string, CardInstance>;
   events: GameEvent[];
 };
 
@@ -75,6 +80,18 @@ type Command =
   | {
       type: "EndTurn";
       player_id: string;
+    }
+  | {
+      type: "AttackUnit";
+      player_id: string;
+      attacker_id: string;
+      target_id: string;
+    }
+  | {
+      type: "AttackPlayer";
+      player_id: string;
+      attacker_id: string;
+      target_player_id: string;
     };
 
 function App() {
@@ -97,6 +114,15 @@ function App() {
     setup();
   }, []);
 
+  useEffect(() => {
+    if (state) {
+      console.log("Game State:", state);
+      console.log("Player 1 Hand:", state.players[0]?.hand);
+      console.log("Player 2 Hand:", state.players[1]?.hand);
+      console.log("Card Instances:", state.card_instances);
+    }
+  }, [state]);
+
   const currentPlayer = useMemo(() => {
     if (!state) return null;
     return state.players[state.current_player];
@@ -105,10 +131,10 @@ function App() {
   const getCardDefinition = (cardInstanceId: string) => {
     if (!state) return null;
 
-    const instance = state.card_instances[cardInstanceId];
+    const instance = state.card_instances.get(cardInstanceId);
     if (!instance) return null;
 
-    return state.card_definitions[instance.definition_id] ?? null;
+    return state.card_definitions.get(instance.definition_id) ?? null;
   };
 
   const refreshState = () => {
@@ -148,6 +174,28 @@ function App() {
     });
   };
 
+  const onAttackPlayer = (attackerId: string, targetPlayerId: string) => {
+    if (!currentPlayer) return;
+
+    dispatchCommand({
+      type: "AttackPlayer",
+      player_id: currentPlayer.id,
+      attacker_id: attackerId,
+      target_player_id: targetPlayerId,
+    });
+  };
+
+  const onAttackUnit = (attackerId: string, targetId: string) => {
+    if (!currentPlayer) return;
+
+    dispatchCommand({
+      type: "AttackUnit",
+      player_id: currentPlayer.id,
+      attacker_id: attackerId,
+      target_id: targetId,
+    });
+  };
+
   if (!ready || !state || !currentPlayer) {
     return <div style={{ padding: 24 }}>Loading...</div>;
   }
@@ -176,6 +224,7 @@ function App() {
             }}
           >
             <h2>{player.id}</h2>
+            <p>HP: {player.hp}</p>
             <p>
               Mana: {player.mana}/{player.max_mana}
             </p>
@@ -209,11 +258,56 @@ function App() {
             <ul>
               {player.field.map((cardInstanceId) => {
                 const card = getCardDefinition(cardInstanceId);
-                if (!card) return null;
+                const instance = state.card_instances.get(cardInstanceId);
+                if (!card || !instance) return null;
+
+                const isCurrentPlayersUnit = player.id === currentPlayer.id;
 
                 return (
-                  <li key={cardInstanceId}>
-                    {card.name} <small>({cardInstanceId})</small>
+                  <li key={cardInstanceId} style={{ marginBottom: 8 }}>
+                    <strong>{card.name}</strong>
+                    <br />
+                    ATK: {instance.attack} / HP: {instance.health}/
+                    {instance.max_health}
+                    <br />
+                    Exhausted: {String(instance.exhausted)}
+                    <br />
+                    {isCurrentPlayersUnit && !instance.exhausted && (
+                      <>
+                        {state.players
+                          .filter((p) => p.id !== currentPlayer.id)
+                          .map((enemy) => (
+                            <button
+                              key={enemy.id}
+                              onClick={() =>
+                                onAttackPlayer(cardInstanceId, enemy.id)
+                              }
+                            >
+                              Attack {enemy.id}
+                            </button>
+                          ))}
+
+                        {state.players
+                          .filter((p) => p.id !== currentPlayer.id)
+                          .flatMap((enemy) =>
+                            enemy.field.map((targetId) => {
+                              const targetCard = getCardDefinition(targetId);
+                              if (!targetCard) return null;
+
+                              return (
+                                <button
+                                  key={targetId}
+                                  onClick={() =>
+                                    onAttackUnit(cardInstanceId, targetId)
+                                  }
+                                >
+                                  Attack {targetCard.name}
+                                </button>
+                              );
+                            }),
+                          )}
+                      </>
+                    )}
                   </li>
                 );
               })}
