@@ -1,16 +1,39 @@
 import { useEffect, useMemo, useState } from "react";
 import init, { Engine } from "tcg_core";
 
-type Card = {
+type CardType = "Unit" | "Spell";
+
+type EffectDefinition =
+  | { Draw: { amount: number } }
+  | { Damage: { amount: number } }
+  | { Heal: { amount: number } };
+
+type CardDefinition = {
   id: string;
   name: string;
   cost: number;
+  card_type: CardType;
+  effects: EffectDefinition[];
+};
+
+type Zone = "Deck" | "Hand" | "Field" | "Graveyard";
+
+type CardInstance = {
+  id: string;
+  definition_id: string;
+  owner_id: string;
+  controller_id: string;
+  zone: Zone;
 };
 
 type PlayerState = {
   id: string;
-  hand: Card[];
-  field: Card[];
+  mana: number;
+  max_mana: number;
+  deck: string[];
+  hand: string[];
+  field: string[];
+  graveyard: string[];
 };
 
 type GameEvent =
@@ -18,8 +41,10 @@ type GameEvent =
   | {
       type: "CardPlayed";
       player_id: string;
-      card_id: string;
+      card_instance_id: string;
+      card_definition_id: string;
       card_name: string;
+      cost: number;
     }
   | {
       type: "TurnEnded";
@@ -36,6 +61,8 @@ type GameState = {
   current_player: number;
   players: PlayerState[];
   turn: number;
+  card_definitions: Record<string, CardDefinition>;
+  card_instances: Record<string, CardInstance>;
   events: GameEvent[];
 };
 
@@ -43,7 +70,7 @@ type Command =
   | {
       type: "PlayCard";
       player_id: string;
-      card_id: string;
+      card_instance_id: string;
     }
   | {
       type: "EndTurn";
@@ -75,8 +102,18 @@ function App() {
     return state.players[state.current_player];
   }, [state]);
 
+  const getCardDefinition = (cardInstanceId: string) => {
+    if (!state) return null;
+
+    const instance = state.card_instances[cardInstanceId];
+    if (!instance) return null;
+
+    return state.card_definitions[instance.definition_id] ?? null;
+  };
+
   const refreshState = () => {
     if (!engine) return;
+
     const nextState = engine.get_state() as unknown as GameState;
     setState(nextState);
   };
@@ -92,13 +129,13 @@ function App() {
     }
   };
 
-  const onPlayCard = (cardId: string) => {
+  const onPlayCard = (cardInstanceId: string) => {
     if (!currentPlayer) return;
 
     dispatchCommand({
       type: "PlayCard",
       player_id: currentPlayer.id,
-      card_id: cardId,
+      card_instance_id: cardInstanceId,
     });
   };
 
@@ -120,7 +157,12 @@ function App() {
       <h1>TCG WASM Demo</h1>
 
       <p>Turn: {state.turn}</p>
-      <p>Current Player: {currentPlayer.id}</p>
+      <p>
+        Current Player: <strong>{currentPlayer.id}</strong>
+      </p>
+      <p>
+        Mana: {currentPlayer.mana}/{currentPlayer.max_mana}
+      </p>
 
       <div style={{ display: "flex", gap: 24, marginTop: 24 }}>
         {state.players.map((player) => (
@@ -130,28 +172,65 @@ function App() {
               border: "1px solid #ccc",
               borderRadius: 12,
               padding: 16,
-              width: 280,
+              width: 320,
             }}
           >
             <h2>{player.id}</h2>
+            <p>
+              Mana: {player.mana}/{player.max_mana}
+            </p>
 
             <h3>Hand</h3>
             <ul>
-              {player.hand.map((card) => (
-                <li key={card.id}>
-                  {card.name} (cost {card.cost}){" "}
-                  {player.id === currentPlayer.id && (
-                    <button onClick={() => onPlayCard(card.id)}>Play</button>
-                  )}
-                </li>
-              ))}
+              {player.hand.map((cardInstanceId) => {
+                const card = getCardDefinition(cardInstanceId);
+                if (!card) return null;
+
+                const canClick = player.id === currentPlayer.id;
+
+                return (
+                  <li key={cardInstanceId} style={{ marginBottom: 8 }}>
+                    <strong>{card.name}</strong> [{card.card_type}] cost{" "}
+                    {card.cost}
+                    <br />
+                    <small>instance: {cardInstanceId}</small>
+                    <br />
+                    {canClick && (
+                      <button onClick={() => onPlayCard(cardInstanceId)}>
+                        Play
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
 
             <h3>Field</h3>
             <ul>
-              {player.field.map((card) => (
-                <li key={card.id}>{card.name}</li>
-              ))}
+              {player.field.map((cardInstanceId) => {
+                const card = getCardDefinition(cardInstanceId);
+                if (!card) return null;
+
+                return (
+                  <li key={cardInstanceId}>
+                    {card.name} <small>({cardInstanceId})</small>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <h3>Graveyard</h3>
+            <ul>
+              {player.graveyard.map((cardInstanceId) => {
+                const card = getCardDefinition(cardInstanceId);
+                if (!card) return null;
+
+                return (
+                  <li key={cardInstanceId}>
+                    {card.name} <small>({cardInstanceId})</small>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ))}

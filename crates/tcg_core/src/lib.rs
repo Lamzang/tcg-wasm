@@ -8,12 +8,10 @@ use engine::CoreEngine;
 use serde_wasm_bindgen::{from_value, to_value};
 use wasm_bindgen::prelude::*;
 
-
 #[wasm_bindgen]
 pub struct Engine {
     core: CoreEngine,
 }
-
 
 #[wasm_bindgen]
 impl Engine {

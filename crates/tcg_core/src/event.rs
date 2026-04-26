@@ -7,8 +7,10 @@ pub enum GameEvent {
 
     CardPlayed {
         player_id: String,
-        card_id: String,
-        card_name: String
+        card_instance_id: String,
+        card_definition_id: String,
+        card_name: String,
+        cost: u32,
     },
 
     TurnEnded {

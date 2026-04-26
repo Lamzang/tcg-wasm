@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum Command {
     PlayCard {
         player_id: String,
-        card_id: String,
+        card_instance_id: String,
     },
     EndTurn {
         player_id:String
