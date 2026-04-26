@@ -13,12 +13,42 @@ type PlayerState = {
   field: Card[];
 };
 
+type GameEvent =
+  | { type: "GameStarted" }
+  | {
+      type: "CardPlayed";
+      player_id: string;
+      card_id: string;
+      card_name: string;
+    }
+  | {
+      type: "TurnEnded";
+      player_id: string;
+      next_player_id: string;
+      turn: number;
+    }
+  | {
+      type: "CommandRejected";
+      reason: string;
+    };
+
 type GameState = {
   current_player: number;
   players: PlayerState[];
   turn: number;
-  log: string[];
+  events: GameEvent[];
 };
+
+type Command =
+  | {
+      type: "PlayCard";
+      player_id: string;
+      card_id: string;
+    }
+  | {
+      type: "EndTurn";
+      player_id: string;
+    };
 
 function App() {
   const [ready, setReady] = useState(false);
@@ -28,13 +58,15 @@ function App() {
   useEffect(() => {
     const setup = async () => {
       await init();
+
       const e = new Engine();
-      const initialState = e.get_state() as GameState;
+      const initialState = e.get_state() as unknown as GameState;
 
       setEngine(e);
       setState(initialState);
       setReady(true);
     };
+
     setup();
   }, []);
 
@@ -43,21 +75,40 @@ function App() {
     return state.players[state.current_player];
   }, [state]);
 
-  const onPlayCard = () => {
-    if (!engine) return null;
+  const refreshState = () => {
+    if (!engine) return;
+    const nextState = engine.get_state() as unknown as GameState;
+    setState(nextState);
+  };
+
+  const dispatchCommand = (command: Command) => {
+    if (!engine) return;
 
     try {
-      const nextState = engine.play_first_card() as GameState;
-      setState(nextState);
+      engine.dispatch(command);
+      refreshState();
     } catch (err) {
       alert(String(err));
     }
   };
 
+  const onPlayCard = (cardId: string) => {
+    if (!currentPlayer) return;
+
+    dispatchCommand({
+      type: "PlayCard",
+      player_id: currentPlayer.id,
+      card_id: cardId,
+    });
+  };
+
   const onEndTurn = () => {
-    if (!engine) return null;
-    const nextState = engine.end_turn() as GameState;
-    setState(nextState);
+    if (!currentPlayer) return;
+
+    dispatchCommand({
+      type: "EndTurn",
+      player_id: currentPlayer.id,
+    });
   };
 
   if (!ready || !state || !currentPlayer) {
@@ -67,6 +118,7 @@ function App() {
   return (
     <div style={{ padding: 24, fontFamily: "sans-serif" }}>
       <h1>TCG WASM Demo</h1>
+
       <p>Turn: {state.turn}</p>
       <p>Current Player: {currentPlayer.id}</p>
 
@@ -87,7 +139,10 @@ function App() {
             <ul>
               {player.hand.map((card) => (
                 <li key={card.id}>
-                  {card.name} (cost {card.cost})
+                  {card.name} (cost {card.cost}){" "}
+                  {player.id === currentPlayer.id && (
+                    <button onClick={() => onPlayCard(card.id)}>Play</button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -103,15 +158,16 @@ function App() {
       </div>
 
       <div style={{ display: "flex", gap: 12, marginTop: 24 }}>
-        <button onClick={onPlayCard}>Play First Card</button>
         <button onClick={onEndTurn}>End Turn</button>
       </div>
 
       <div style={{ marginTop: 24 }}>
-        <h3>Log</h3>
+        <h3>Events</h3>
         <ul>
-          {state.log.map((line, idx) => (
-            <li key={idx}>{line}</li>
+          {state.events.map((event, idx) => (
+            <li key={idx}>
+              <code>{JSON.stringify(event)}</code>
+            </li>
           ))}
         </ul>
       </div>
