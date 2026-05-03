@@ -2,7 +2,7 @@ use crate::command::Command;
 use crate::event::GameEvent;
 use crate::model::{
     CardDefinition, CardInstance, CardInstanceId, CardType, EffectDefinition, GameState,
-    PlayerState, UnitStats, Zone,
+    PlayerState, UnitStats, Zone, EffectTarget,
 };
 use std::collections::HashMap;
 
@@ -90,6 +90,7 @@ impl CoreEngine {
         let player1 = PlayerState {
             id: "p1".to_string(),
             hp: 20,
+            max_hp: 20,
             mana: 3,
             max_mana: 3,
             deck: vec![],
@@ -101,6 +102,7 @@ impl CoreEngine {
         let player2 = PlayerState {
             id: "p2".to_string(),
             hp: 20,
+            max_hp: 20,
             mana: 3,
             max_mana: 3,
             deck: vec![],
@@ -117,6 +119,7 @@ impl CoreEngine {
                 card_definitions,
                 card_instances,
                 events: vec![GameEvent::GameStarted],
+                next_instance_seq: 0,
             },
         }
     }
@@ -149,7 +152,8 @@ impl CoreEngine {
             Command::PlayCard {
                 player_id,
                 card_instance_id,
-            } => self.handle_play_card(player_id, card_instance_id),
+                target,
+            } => self.handle_play_card(player_id, card_instance_id, target),
 
             Command::EndTurn { player_id } => self.handle_end_turn(player_id),
 
@@ -171,6 +175,7 @@ impl CoreEngine {
         &mut self,
         player_id: String,
         card_instance_id: String,
+        target: Option<EffectTarget>,
     ) -> Result<Vec<GameEvent>, String> {
         if !self.is_current_player(&player_id)? {
             return Ok(vec![self.reject("It is not this player's turn")]);
@@ -200,6 +205,10 @@ impl CoreEngine {
             .get(&card_instance.definition_id)
             .ok_or("Card definition not found")?
             .clone();
+
+        if self.effect_requires_target(&card_definition.effects) && target.is_none() {
+            return Ok(vec![self.reject("This card requires a target")]);
+        }
 
         if self.state.players[player_index].mana < card_definition.cost {
             return Ok(vec![self.reject("Not enough mana")]);
@@ -238,16 +247,24 @@ impl CoreEngine {
             }
         }
 
-        let event = GameEvent::CardPlayed {
-            player_id,
-            card_instance_id,
-            card_definition_id: card_definition.id,
-            card_name: card_definition.name,
-            cost: card_definition.cost,
-        };
+        let mut events = vec![GameEvent::CardPlayed {
+    player_id: player_id.clone(),
+    card_instance_id,
+    card_definition_id: card_definition.id.clone(),
+    card_name: card_definition.name.clone(),
+    cost: card_definition.cost,
+}];
 
-        self.state.events.push(event.clone());
-        Ok(vec![event])
+let effect_events =
+    self.resolve_effects(&player_id, &card_definition.effects, target.as_ref())?;
+
+events.extend(effect_events);
+
+for event in events.clone() {
+    self.state.events.push(event);
+}
+
+Ok(events)
     }
 
     fn handle_attack_unit(
@@ -385,6 +402,73 @@ impl CoreEngine {
         Ok(vec![event])
     }
 
+    fn resolve_effects(
+    &mut self,
+    source_player_id: &str,
+    effects: &[EffectDefinition],
+    target: Option<&EffectTarget>,
+) -> Result<Vec<GameEvent>, String> {
+    let mut events = vec![];
+
+    for effect in effects {
+        match effect {
+            EffectDefinition::Draw { amount } => {
+                events.extend(self.draw_cards(source_player_id, *amount)?);
+            }
+
+            EffectDefinition::Damage { amount } => {
+                let target = target.ok_or("Damage effect requires a target")?;
+
+                match target {
+                    EffectTarget::Unit { card_instance_id } => {
+                        events.extend(self.damage_unit(card_instance_id, *amount)?);
+                    }
+                    EffectTarget::Player { player_id } => {
+                        events.push(self.damage_player(player_id, *amount)?);
+                    }
+                }
+            }
+
+            EffectDefinition::Heal { amount } => {
+                let target = target.ok_or("Heal effect requires a target")?;
+
+                match target {
+                    EffectTarget::Unit { card_instance_id } => {
+                        events.push(self.heal_unit(card_instance_id, *amount)?);
+                    }
+                    EffectTarget::Player { player_id } => {
+                        events.push(self.heal_player(player_id, *amount)?);
+                    }
+                }
+            }
+
+            EffectDefinition::Summon {
+                card_definition_id,
+                count,
+            } => {
+                for _ in 0..*count {
+                    events.push(self.summon_unit(source_player_id, card_definition_id)?);
+                }
+            }
+
+            EffectDefinition::Buff { attack, health } => {
+                let target = target.ok_or("Buff effect requires a target")?;
+
+                match target {
+                    EffectTarget::Unit { card_instance_id } => {
+                        events.push(self.buff_unit(card_instance_id, *attack, *health)?);
+                    }
+                    EffectTarget::Player { .. } => {
+                        return Err("Buff effect requires a unit target".to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(events)
+}
+
     fn validate_attacker(&mut self, player_id: &str, attacker_id: &str) -> Result<(), String> {
         let attacker = self
             .state
@@ -511,4 +595,173 @@ impl CoreEngine {
         self.state.events.push(event.clone());
         event
     }
+    fn effect_requires_target(&self, effects: &[EffectDefinition]) -> bool {
+    effects.iter().any(|effect| {
+        matches!(
+            effect,
+            EffectDefinition::Damage { .. }
+                | EffectDefinition::Heal { .. }
+                | EffectDefinition::Buff { .. }
+        )
+    })
+    }
+    fn draw_cards(&mut self, player_id: &str, amount: u32) -> Result<Vec<GameEvent>, String> {
+        let player_index = self.get_player_index(player_id)?;
+        let mut events = vec![];
+
+        for _ in 0..amount {
+        let card_id = match self.state.players[player_index].deck.pop() {
+            Some(id) => id,
+            None => break,
+        };
+
+        self.state.players[player_index].hand.push(card_id.clone());
+
+        if let Some(instance) = self.state.card_instances.get_mut(&card_id) {
+            instance.zone = Zone::Hand;
+        }
+
+        events.push(GameEvent::CardDrawn {
+            player_id: player_id.to_string(),
+            card_instance_id: card_id,
+        });
+    }
+
+    Ok(events)
+}
+    fn summon_unit(
+    &mut self,
+    player_id: &str,
+    card_definition_id: &str,
+) -> Result<GameEvent, String> {
+    let player_index = self.get_player_index(player_id)?;
+
+    let definition = self
+        .state
+        .card_definitions
+        .get(card_definition_id)
+        .ok_or("Summoned card definition not found")?
+        .clone();
+
+    if definition.card_type != CardType::Unit {
+        return Err("Only unit cards can be summoned".to_string());
+    }
+
+    let instance_id = format!("{}_token_{}", player_id, self.state.next_instance_seq);
+    self.state.next_instance_seq += 1;
+
+    let mut instance = CardInstance {
+        id: instance_id.clone(),
+        definition_id: card_definition_id.to_string(),
+        owner_id: player_id.to_string(),
+        controller_id: player_id.to_string(),
+        zone: Zone::Field,
+        attack: None,
+        health: None,
+        max_health: None,
+        exhausted: true,
+    };
+
+    if let Some(stats) = &definition.unit_stats {
+        instance.attack = Some(stats.attack);
+        instance.health = Some(stats.health);
+        instance.max_health = Some(stats.health);
+    }
+
+    self.state
+        .card_instances
+        .insert(instance_id.clone(), instance);
+
+    self.state.players[player_index].field.push(instance_id.clone());
+
+    Ok(GameEvent::UnitSummoned {
+        player_id: player_id.to_string(),
+        card_instance_id: instance_id,
+        card_definition_id: card_definition_id.to_string(),
+    })
+}
+
+fn heal_player(&mut self, player_id: &str, amount: i32) -> Result<GameEvent, String> {
+    let player_index = self.get_player_index(player_id)?;
+
+    let player = &mut self.state.players[player_index];
+    player.hp = (player.hp + amount).min(player.max_hp);
+
+    Ok(GameEvent::PlayerHealed {
+        player_id: player_id.to_string(),
+        amount,
+        new_hp: player.hp,
+    })
+}
+fn damage_player(&mut self, player_id: &str, amount: i32) -> Result<GameEvent, String> {
+    let player_index = self.get_player_index(player_id)?;
+
+    let player = &mut self.state.players[player_index];
+    player.hp -= amount;
+
+    Ok(GameEvent::PlayerDamaged {
+        player_id: player_id.to_string(),
+        damage: amount,
+        remaining_hp: player.hp,
+    })
+}
+fn heal_unit(
+    &mut self,
+    card_instance_id: &str,
+    amount: i32,
+) -> Result<GameEvent, String> {
+    let unit = self
+        .state
+        .card_instances
+        .get_mut(card_instance_id)
+        .ok_or("Unit not found")?;
+
+    if unit.zone != Zone::Field {
+        return Err("Cannot heal a unit outside the field".to_string());
+    }
+
+    let current_health = unit.health.ok_or("Unit has no health")?;
+    let max_health = unit.max_health.ok_or("Unit has no max health")?;
+
+    let new_health = (current_health + amount).min(max_health);
+    unit.health = Some(new_health);
+
+    Ok(GameEvent::UnitHealed {
+        card_instance_id: card_instance_id.to_string(),
+        amount,
+        new_health,
+    })
+}
+fn buff_unit(
+    &mut self,
+    card_instance_id: &str,
+    attack_delta: i32,
+    health_delta: i32,
+) -> Result<GameEvent, String> {
+    let unit = self
+        .state
+        .card_instances
+        .get_mut(card_instance_id)
+        .ok_or("Unit not found")?;
+
+    if unit.zone != Zone::Field {
+        return Err("Cannot buff a unit outside the field".to_string());
+    }
+
+    let new_attack = unit.attack.ok_or("Unit has no attack")? + attack_delta;
+    let new_health = unit.health.ok_or("Unit has no health")? + health_delta;
+    let new_max_health = unit.max_health.ok_or("Unit has no max health")? + health_delta;
+
+    unit.attack = Some(new_attack);
+    unit.health = Some(new_health);
+    unit.max_health = Some(new_max_health);
+
+    Ok(GameEvent::UnitBuffed {
+        card_instance_id: card_instance_id.to_string(),
+        attack_delta,
+        health_delta,
+        new_attack,
+        new_health,
+    })
+}
 }

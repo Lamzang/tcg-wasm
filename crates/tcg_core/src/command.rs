@@ -1,3 +1,4 @@
+use crate::model::EffectTarget;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -6,6 +7,7 @@ pub enum Command {
     PlayCard {
         player_id: String,
         card_instance_id: String,
+        target: Option<EffectTarget>,
     },
 
     EndTurn {
